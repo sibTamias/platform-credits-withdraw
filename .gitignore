@@ -1,0 +1,6 @@
+.env
+*.log
+privkey_protx.txt
+privkey_*.txt
+.platform_credits_withdraw_last_epoch
+.DS_Store
