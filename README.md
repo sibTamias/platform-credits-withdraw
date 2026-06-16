@@ -149,7 +149,7 @@ Amount + fee must be above zero
    - `epoch.endTime` — начало **следующей** эпохи.
 3. С флагом `--epoch-gate`:
    - проверяет файл `~/.platform_credits_withdraw_last_epoch` (уже был вывод для этой эпохи?);
-   - ждёт `EPOCH_WITHDRAW_OFFSET_MIN` минут после начала эпохи (по умолчанию **120**).
+   - ждёт `EPOCH_WITHDRAW_OFFSET_SEC` секунд после начала эпохи (по умолчанию **5**).
 4. С флагом `--reschedule-cron` **после прогона**:
    - вычисляет время: `следующая_эпоха + offset`;
    - обновляет одну строку в crontab (маркер `# platform_credits_withdraw epoch-scheduled`).
@@ -162,14 +162,14 @@ TZ=Asia/Irkutsk
 53 10 25 6 * /home/mno/bin/platform_credits_withdraw.sh --update-keys --epoch-gate --reschedule-cron >> /home/mno/tmp/cron.log 2>&1
 ```
 
-После выполнения 25.06.2026 10:53 (Irkutsk) cron автоматически сдвинется на **~04.07.2026 10:53** (начало эпохи 74 + 2 часа).
+После прогона cron автоматически сдвигается на **начало следующей эпохи + 5 секунд**.
 
 ### Переменные
 
 | Переменная | По умолчанию | Описание |
 |------------|--------------|----------|
 | `PLATFORM_EXPLORER_URL` | `https://platform-explorer.pshenmic.dev` | API эпох |
-| `EPOCH_WITHDRAW_OFFSET_MIN` | `120` | Минут после начала эпохи до запуска |
+| `EPOCH_WITHDRAW_OFFSET_SEC` | `5` | Секунд после начала эпохи до запуска (cron и ожидание в скрипте) |
 | `CRON_TZ` | `Asia/Irkutsk` | Часовой пояс crontab |
 | `CRON_LOG` | `~/tmp/cron.log` | Лог cron |
 | `LAST_EPOCH_FILE` | `~/bin/.platform_credits_withdraw_last_epoch` | Последняя обработанная эпоха |
@@ -257,7 +257,7 @@ export MASS_SEND_DIR="$HOME/dash-platform-mass-send"
 export KEYS_FILE="$HOME/bin/privkey_protx.txt"
 export NODE_PATH="$HOME/bin/node-v24.8.0-linux-x64/bin/node"
 export PLATFORM_EXPLORER_URL="https://platform-explorer.pshenmic.dev"
-export EPOCH_WITHDRAW_OFFSET_MIN="120"
+export EPOCH_WITHDRAW_OFFSET_SEC="5"
 export CRON_TZ="Asia/Irkutsk"
 ```
 

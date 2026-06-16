@@ -54,7 +54,7 @@ export MIN_WITHDRAWAL_FEE="400000000"
 export DEFAULT_WITHDRAWAL_FEE="400000000"
 export NODE_PATH="$HOME/bin/node-v24.8.0-linux-x64/bin/node"
 export PLATFORM_EXPLORER_URL="https://platform-explorer.pshenmic.dev"
-export EPOCH_WITHDRAW_OFFSET_MIN="120"
+export EPOCH_WITHDRAW_OFFSET_SEC="5"
 export CRON_TZ="Asia/Irkutsk"
 export DASH_CLI_CMD="sudo -u dash01 /opt/dash/bin/dash-cli"
 EOF
