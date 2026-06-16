@@ -13,7 +13,7 @@ set -euo pipefail
 
 CONTAINER="${DASH_CORE_CONTAINER:-}"
 if [[ -z "$CONTAINER" ]]; then
-  CONTAINER="$(docker ps --format '{{.Names}}' | rg 'mainnet-core-1$' | head -n 1 || true)"
+  CONTAINER="$(docker ps --format '{{.Names}}' | grep 'mainnet-core-1$' | head -n 1 || true)"
 fi
 
 if [[ -z "$CONTAINER" ]]; then
