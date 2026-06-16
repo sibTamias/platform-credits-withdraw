@@ -19,6 +19,7 @@ KEYS_FILE="${KEYS_FILE:-$BIN/privkey_protx.txt}"
 PLATFORM_EXPLORER_URL="${PLATFORM_EXPLORER_URL:-https://platform-explorer.pshenmic.dev}"
 MIN_WITHDRAWAL_FEE="${MIN_WITHDRAWAL_FEE:-400000000}"
 VERBOSE=0
+SAMPLE=0
 
 usage() {
 	cat <<'EOF'
@@ -26,6 +27,7 @@ Usage: check_fleet_balances.sh [options]
 
 Options:
   --verbose, -v   Показать баланс и время по каждой ноде
+  --sample        Один случайный proTx (как в wait_for_withdrawable_balance)
   --keys-file F   Файл privkey:proTxHash (default: privkey_protx.txt)
   -h, --help      Справка
 
@@ -38,6 +40,7 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		-h|--help) usage; exit 0 ;;
 		-v|--verbose) VERBOSE=1; shift ;;
+		--sample) SAMPLE=1; shift ;;
 		--keys-file) KEYS_FILE="$2"; shift 2 ;;
 		*) echo "[ERROR] unknown option: $1" >&2; usage >&2; exit 1 ;;
 	esac
@@ -72,6 +75,28 @@ total=${#PROTX_LIST[@]}
 if (( total == 0 )); then
 	echo "[ERROR] no proTxHash entries in $KEYS_FILE" >&2
 	exit 1
+fi
+
+if (( SAMPLE )); then
+	protx="${PROTX_LIST[$RANDOM % total]}"
+	echo "API:              $PLATFORM_EXPLORER_URL"
+	echo "Keys file:        $KEYS_FILE"
+	echo "Pool size:        $total"
+	echo "Sample mode:      1 random proTx (epoch poll uses this)"
+	echo ""
+	t0=$(now_ms)
+	bal=$(get_validator_balance_credits "$protx")
+	t1=$(now_ms)
+	echo "Sample proTx:       ${protx:0:16}...${protx: -8}"
+	echo "Balance:            $bal credits"
+	echo "Request time:       $((t1 - t0)) ms"
+	echo "Min withdrawable:   > $MIN_WITHDRAWAL_FEE"
+	if (( bal > MIN_WITHDRAWAL_FEE )); then
+		echo "=> TRIGGER: would start withdrawal for all $total nodes"
+	else
+		echo "=> wait ${EPOCH_BALANCE_POLL_SEC:-10}s and sample another node"
+	fi
+	exit 0
 fi
 
 echo "API:              $PLATFORM_EXPLORER_URL"

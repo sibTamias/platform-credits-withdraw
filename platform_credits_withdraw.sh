@@ -38,7 +38,7 @@ if [[ -z "$EPOCH_WITHDRAW_OFFSET_SEC" && -n "${EPOCH_WITHDRAW_OFFSET_MIN:-}" ]];
 	EPOCH_WITHDRAW_OFFSET_SEC=$((EPOCH_WITHDRAW_OFFSET_MIN * 60))
 fi
 EPOCH_WITHDRAW_OFFSET_SEC="${EPOCH_WITHDRAW_OFFSET_SEC:-5}"
-EPOCH_BALANCE_POLL_SEC="${EPOCH_BALANCE_POLL_SEC:-300}"
+EPOCH_BALANCE_POLL_SEC="${EPOCH_BALANCE_POLL_SEC:-10}"
 EPOCH_WITHDRAW_RETRY_SEC="${EPOCH_WITHDRAW_RETRY_SEC:-120}"
 EPOCH_WITHDRAW_MAX_ROUNDS="${EPOCH_WITHDRAW_MAX_ROUNDS:-20}"
 LAST_EPOCH_FILE="${LAST_EPOCH_FILE:-$BIN/.platform_credits_withdraw_last_epoch}"
@@ -80,7 +80,7 @@ Options:
 Environment (.env):
   KEYS_FILE, MASS_SEND_DIR, NODE_PATH, NETWORK, TYPE, TIMEOUT_SEC
   PLATFORM_EXPLORER_URL, EPOCH_WITHDRAW_OFFSET_SEC (default 5 — cron = старт эпохи + 5с)
-  EPOCH_BALANCE_POLL_SEC (default 300), EPOCH_WITHDRAW_RETRY_SEC (120), EPOCH_WITHDRAW_MAX_ROUNDS (20)
+  EPOCH_BALANCE_POLL_SEC (default 10 — опрос 1 случайной ноды), EPOCH_WITHDRAW_RETRY_SEC (120), EPOCH_WITHDRAW_MAX_ROUNDS (20)
   LAST_EPOCH_FILE, CRON_LOG, CRON_TZ
   RPC_URL, RPC_USER, RPC_PASS, WALLET, WALLET_FEE, WALLET_PASSPHRASE — для --update-keys
   DASH_CLI_CMD — на сервере 109: sudo -u dash01 /opt/dash/bin/dash-cli
@@ -213,6 +213,13 @@ list_protx_hashes() {
 	grep -v '^[[:space:]]*#' "$KEYS_FILE" | grep -v '^[[:space:]]*$' | awk -F: '{print $NF}'
 }
 
+pick_random_protx() {
+	local -a protx_arr=()
+	mapfile -t protx_arr < <(list_protx_hashes)
+	((${#protx_arr[@]})) || return 1
+	echo "${protx_arr[$RANDOM % ${#protx_arr[@]}]}"
+}
+
 get_validator_balance_credits() {
 	local protx="$1" bal
 	bal=$(curl -sf --max-time 20 "$PLATFORM_EXPLORER_URL/validator/$protx" \
@@ -249,21 +256,26 @@ wait_until_run_time() {
 
 wait_for_withdrawable_balance() {
 	local epoch_end_ms="$1"
-	local max count checked now poll=0
-	echo "[INFO] Polling balances every ${EPOCH_BALANCE_POLL_SEC}s (min withdrawable: >${MIN_WITHDRAWAL_FEE} credits)..." >&2
-	format_epoch_ms "$epoch_end_ms" >&2
+	local protx bal now poll=0 pool_size
+	pool_size=$(list_protx_hashes | wc -l | tr -d ' ')
+	echo "[INFO] Polling 1 random node every ${EPOCH_BALANCE_POLL_SEC}s (pool=${pool_size}, trigger if balance > ${MIN_WITHDRAWAL_FEE})..." >&2
 	echo "[INFO] Poll deadline (epoch end):" >&2
+	format_epoch_ms "$epoch_end_ms" >&2
 	while true; do
 		((poll++)) || true
-		read -r max count checked <<<"$(fleet_balance_stats)"
+		protx=$(pick_random_protx) || {
+			echo "[ERROR] No proTxHash in $KEYS_FILE" >&2
+			return 1
+		}
+		bal=$(get_validator_balance_credits "$protx")
 		now=$(now_ms)
-		echo "[INFO] Poll #$poll: checked=$checked, above_min=$count, max_balance=${max} credits" >&2
-		if (( count > 0 )); then
-			echo "[INFO] Withdrawable balance detected on $count validator(s)." >&2
+		echo "[INFO] Poll #$poll: sample ${protx:0:16}... balance=${bal} credits" >&2
+		if (( bal > MIN_WITHDRAWAL_FEE )); then
+			echo "[INFO] Sampled node above minimum — starting withdrawal for all ${pool_size} nodes." >&2
 			return 0
 		fi
 		if (( now >= epoch_end_ms )); then
-			echo "[WARN] Epoch ended without balance above minimum (max=${max})." >&2
+			echo "[WARN] Epoch ended without sampled balance above minimum (last=${bal})." >&2
 			return 1
 		fi
 		sleep "$EPOCH_BALANCE_POLL_SEC"
@@ -442,10 +454,11 @@ run_epoch_withdrawal_loop() {
 	fi
 
 	while (( round <= EPOCH_WITHDRAW_MAX_ROUNDS )); do
+		echo "[INFO] Full fleet balance check (all nodes)..." >&2
 		read -r max count checked <<<"$(fleet_balance_stats)"
-		echo "[INFO] Pre-round check: above_min=$count, max_balance=${max}" >&2
+		echo "[INFO] Pre-round: checked=$checked, above_min=$count, max_balance=${max}" >&2
 		if (( count == 0 )); then
-			echo "[INFO] No validators with balance > ${MIN_WITHDRAWAL_FEE} — epoch withdrawal complete." >&2
+			echo "[INFO] All validators below minimum — epoch withdrawal complete." >&2
 			break
 		fi
 		run_withdrawal_round "$round" || true
@@ -454,12 +467,13 @@ run_epoch_withdrawal_loop() {
 			echo "[WARN] Reached EPOCH_WITHDRAW_MAX_ROUNDS=$EPOCH_WITHDRAW_MAX_ROUNDS" >&2
 			break
 		fi
+		echo "[INFO] Post-round full fleet check..." >&2
 		read -r max count checked <<<"$(fleet_balance_stats)"
 		if (( count == 0 )); then
 			echo "[INFO] All balances now below minimum (max=${max})." >&2
 			break
 		fi
-		echo "[INFO] ${count} validator(s) still above min — next round in ${EPOCH_WITHDRAW_RETRY_SEC}s..." >&2
+		echo "[INFO] ${count}/${checked} still above min — next round in ${EPOCH_WITHDRAW_RETRY_SEC}s..." >&2
 		sleep "$EPOCH_WITHDRAW_RETRY_SEC"
 	done
 }
