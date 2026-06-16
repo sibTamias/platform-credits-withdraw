@@ -12,8 +12,11 @@ set -euo pipefail
 
 BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -r "$BIN/.env" ]] && source "$BIN/.env"
+[[ -r "$HOME/bin/.env" ]] && source "$HOME/bin/.env"
+# shellcheck source=platform_explorer_api.sh
+source "$BIN/platform_explorer_api.sh"
 
-PLATFORM_EXPLORER_URL="${PLATFORM_EXPLORER_URL:-https://platform-explorer.pshenmic.dev}"
+platform_explorer_resolve_url
 TZ_DISPLAY="${TZ_DISPLAY:-Asia/Irkutsk}"
 EPOCH_ARG="${1:-}"
 
@@ -25,7 +28,8 @@ Usage:
   get_platform_epoch.sh [epoch_number]
 
 Environment:
-  PLATFORM_EXPLORER_URL  default: https://platform-explorer.pshenmic.dev
+  PLATFORM_EXPLORER_URL  default: http://localhost:3005
+  PLATFORM_EXPLORER_SSH  optional: mno@161.97.96.43 (API через SSH на platformExp)
   TZ_DISPLAY             default: Asia/Irkutsk
 
 Examples:
@@ -74,17 +78,16 @@ PY
 }
 
 fetch_json() {
-	local url="$1"
+	local path="$1"
 	local data
-	data=$(curl -sf --max-time 20 "$url") || {
-		echo "[ERROR] API request failed: $url" >&2
-		echo "Hint: curl -sv $url" >&2
+	data=$(platform_api_get "$path") || {
+		echo "[ERROR] API request failed: $(platform_explorer_api_label)${path}" >&2
 		exit 1
 	}
 	echo "$data"
 }
 
-status_json=$(fetch_json "$PLATFORM_EXPLORER_URL/status")
+status_json=$(fetch_json "/status")
 cur_epoch=$(echo "$status_json" | jq -r '.epoch.number // .epochs.current // .data.epoch.number // empty')
 if [[ -z "$cur_epoch" || "$cur_epoch" == "null" ]]; then
 	echo "[ERROR] /status did not return epoch number" >&2
@@ -93,7 +96,7 @@ if [[ -z "$cur_epoch" || "$cur_epoch" == "null" ]]; then
 fi
 
 target_epoch="${EPOCH_ARG:-$cur_epoch}"
-epoch_json=$(fetch_json "$PLATFORM_EXPLORER_URL/epoch/$target_epoch")
+epoch_json=$(fetch_json "/epoch/$target_epoch")
 
 start_ms=$(echo "$epoch_json" | jq -r '.epoch.startTime // empty')
 end_ms=$(echo "$epoch_json" | jq -r '.epoch.endTime // empty')
@@ -103,13 +106,13 @@ if [[ -z "$end_ms" || "$end_ms" == "null" ]]; then
 	end_ms="$next_start_ms"
 fi
 if [[ -z "$end_ms" || "$end_ms" == "null" ]]; then
-	next_json=$(fetch_json "$PLATFORM_EXPLORER_URL/epoch/$((target_epoch + 1))" 2>/dev/null || true)
+	next_json=$(fetch_json "/epoch/$((target_epoch + 1))" 2>/dev/null || true)
 	if [[ -n "${next_json:-}" ]]; then
 		end_ms=$(echo "$next_json" | jq -r '.epoch.startTime // empty')
 	fi
 fi
 
-echo "API: $PLATFORM_EXPLORER_URL"
+echo "API: $(platform_explorer_api_label)"
 echo "Current epoch: $cur_epoch"
 echo "Showing epoch: $target_epoch"
 echo

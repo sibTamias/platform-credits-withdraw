@@ -25,6 +25,9 @@ set -euo pipefail
 
 BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -r "$BIN/.env" ]] && source "$BIN/.env"
+[[ -r "$HOME/bin/.env" ]] && source "$HOME/bin/.env"
+# shellcheck source=platform_explorer_api.sh
+source "$BIN/platform_explorer_api.sh"
 
 NETWORK="${NETWORK:-mainnet}"
 TYPE="${TYPE:-withdrawal}"
@@ -32,7 +35,7 @@ KEYS_FILE="${KEYS_FILE:-$BIN/privkey_protx.txt}"
 MASS_SEND_DIR="${MASS_SEND_DIR:-$HOME/dash-platform-mass-send}"
 NODE_PATH="${NODE_PATH:-}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-300}"
-PLATFORM_EXPLORER_URL="${PLATFORM_EXPLORER_URL:-https://platform-explorer.pshenmic.dev}"
+platform_explorer_resolve_url
 EPOCH_WITHDRAW_OFFSET_SEC="${EPOCH_WITHDRAW_OFFSET_SEC:-}"
 if [[ -z "$EPOCH_WITHDRAW_OFFSET_SEC" && -n "${EPOCH_WITHDRAW_OFFSET_MIN:-}" ]]; then
 	EPOCH_WITHDRAW_OFFSET_SEC=$((EPOCH_WITHDRAW_OFFSET_MIN * 60))
@@ -79,7 +82,8 @@ Options:
 
 Environment (.env):
   KEYS_FILE, MASS_SEND_DIR, NODE_PATH, NETWORK, TYPE, TIMEOUT_SEC
-  PLATFORM_EXPLORER_URL, EPOCH_WITHDRAW_OFFSET_SEC (default 5 — cron = старт эпохи + 5с)
+  PLATFORM_EXPLORER_URL (default http://localhost:3005), PLATFORM_EXPLORER_SSH (BigBr → mno@161.97.96.43)
+  EPOCH_WITHDRAW_OFFSET_SEC (default 5 — cron = старт эпохи + 5с)
   EPOCH_BALANCE_POLL_SEC (default 10 — опрос 1 случайной ноды), EPOCH_WITHDRAW_RETRY_SEC (120), EPOCH_WITHDRAW_MAX_ROUNDS (20)
   LAST_EPOCH_FILE, CRON_LOG, CRON_TZ
   RPC_URL, RPC_USER, RPC_PASS, WALLET, WALLET_FEE, WALLET_PASSPHRASE — для --update-keys
@@ -136,7 +140,7 @@ DASH_CLI_CMD="${DASH_CLI_CMD:-${BALANCE_DASH_CLI_CMD:-}}"
 
 fetch_platform_status() {
 	local data
-	data=$(curl -sf --max-time 20 "$PLATFORM_EXPLORER_URL/status") || return 1
+	data=$(platform_api_get "/status") || return 1
 	[[ -n "${data//[$'\t\r\n ']}" ]] || return 1
 	echo "$data"
 }
@@ -153,7 +157,7 @@ get_epoch_timing() {
 	fi
 	if [[ -z "$next_start" || "$next_start" == "null" ]]; then
 		local epoch_json
-		epoch_json=$(curl -sf --max-time 20 "$PLATFORM_EXPLORER_URL/epoch/$cur_epoch") || return 1
+		epoch_json=$(platform_api_get "/epoch/$cur_epoch") || return 1
 		next_start=$(echo "$epoch_json" | jq -r '.epoch.endTime // .nextEpoch.startTime // empty')
 	fi
 	if [[ -z "$cur_start" || "$cur_start" == "null" ]]; then
@@ -222,7 +226,7 @@ pick_random_protx() {
 
 get_validator_balance_credits() {
 	local protx="$1" bal
-	bal=$(curl -sf --max-time 20 "$PLATFORM_EXPLORER_URL/validator/$protx" \
+	bal=$(platform_api_get "/validator/$protx" \
 		| jq -r '.identityBalance // 0' 2>/dev/null) || bal=0
 	[[ "$bal" =~ ^[0-9]+$ ]] || bal=0
 	echo "$bal"
@@ -361,7 +365,7 @@ reschedule_withdraw_cron() {
 handle_epoch_scheduling() {
 	local status_json timing cur_epoch cur_start_ms next_start_ms
 	status_json=$(fetch_platform_status) || {
-		echo "[ERROR] Cannot fetch $PLATFORM_EXPLORER_URL/status" >&2
+		echo "[ERROR] Cannot fetch $(platform_explorer_api_label)/status" >&2
 		return 1
 	}
 	timing=$(get_epoch_timing "$status_json") || {

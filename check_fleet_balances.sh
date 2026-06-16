@@ -14,9 +14,11 @@ set -euo pipefail
 BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -r "$BIN/.env" ]] && source "$BIN/.env"
 [[ -r "$HOME/bin/.env" ]] && source "$HOME/bin/.env"
+# shellcheck source=platform_explorer_api.sh
+source "$BIN/platform_explorer_api.sh"
 
 KEYS_FILE="${KEYS_FILE:-$BIN/privkey_protx.txt}"
-PLATFORM_EXPLORER_URL="${PLATFORM_EXPLORER_URL:-https://platform-explorer.pshenmic.dev}"
+platform_explorer_resolve_url
 MIN_WITHDRAWAL_FEE="${MIN_WITHDRAWAL_FEE:-400000000}"
 VERBOSE=0
 SAMPLE=0
@@ -32,7 +34,7 @@ Options:
   -h, --help      Справка
 
 Environment:
-  KEYS_FILE, PLATFORM_EXPLORER_URL, MIN_WITHDRAWAL_FEE
+  KEYS_FILE, PLATFORM_EXPLORER_URL, PLATFORM_EXPLORER_SSH, MIN_WITHDRAWAL_FEE
 EOF
 }
 
@@ -59,7 +61,7 @@ list_protx_hashes() {
 
 get_validator_balance_credits() {
 	local protx="$1" bal
-	bal=$(curl -sf --max-time 20 "$PLATFORM_EXPLORER_URL/validator/$protx" \
+	bal=$(platform_api_get "/validator/$protx" \
 		| jq -r '.identityBalance // 0' 2>/dev/null) || bal=0
 	[[ "$bal" =~ ^[0-9]+$ ]] || bal=0
 	echo "$bal"
@@ -79,7 +81,7 @@ fi
 
 if (( SAMPLE )); then
 	protx="${PROTX_LIST[$RANDOM % total]}"
-	echo "API:              $PLATFORM_EXPLORER_URL"
+	echo "API:              $(platform_explorer_api_label)"
 	echo "Keys file:        $KEYS_FILE"
 	echo "Pool size:        $total"
 	echo "Sample mode:      1 random proTx (epoch poll uses this)"
@@ -99,7 +101,7 @@ if (( SAMPLE )); then
 	exit 0
 fi
 
-echo "API:              $PLATFORM_EXPLORER_URL"
+echo "API:              $(platform_explorer_api_label)"
 echo "Keys file:        $KEYS_FILE"
 echo "Nodes to check:   $total"
 echo "Min withdrawable: > $MIN_WITHDRAWAL_FEE credits"

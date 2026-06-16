@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Деплой platform-credits-withdraw на сервер (git pull + симлинки в ~/bin).
+# Деплой platform-credits-withdraw на BigBr (109.73.195.123).
+# API эпох — локальный platform-explorer на platformExp (161.97.96.43) через reverse SSH-туннель :13005.
 # Запуск с Mac:
 #   ./setup_platform_credits_server.sh
 #   REPO_URL=git@github.com:sibTamias/platform-credits-withdraw.git ./setup_platform_credits_server.sh
@@ -7,6 +8,8 @@
 set -euo pipefail
 
 SERVER="${SERVER:-mno@109.73.195.123}"
+PLATFORM_EXPLORER_SSH="${PLATFORM_EXPLORER_SSH:-mno@161.97.96.43}"
+PLATFORM_EXPLORER_URL="${PLATFORM_EXPLORER_URL:-http://127.0.0.1:3005}"
 REPO_URL="${REPO_URL:-git@github.com:sibTamias/platform-credits-withdraw.git}"
 REPO_DIR="${REPO_DIR:-platform-credits-withdraw}"
 NODE_VER="v24.8.0"
@@ -27,7 +30,7 @@ else
 fi
 chmod +x ~/"$REPO_DIR"/*.sh
 mkdir -p ~/bin
-for s in platform_credits_withdraw.sh export-private-keys-protx.sh get_platform_epoch.sh; do
+for s in platform_credits_withdraw.sh export-private-keys-protx.sh get_platform_epoch.sh platform_explorer_api.sh; do
   ln -sf ~/"$REPO_DIR"/"$s" ~/bin/"$s"
 done
 echo "Symlinks in ~/bin:"
@@ -53,7 +56,8 @@ export TIMEOUT_SEC="600"
 export MIN_WITHDRAWAL_FEE="400000000"
 export DEFAULT_WITHDRAWAL_FEE="400000000"
 export NODE_PATH="$HOME/bin/node-v24.8.0-linux-x64/bin/node"
-export PLATFORM_EXPLORER_URL="https://platform-explorer.pshenmic.dev"
+# BigBr (109): API через reverse SSH-туннель с platformExp (см. setup_platform_explorer_tunnel.sh)
+export PLATFORM_EXPLORER_URL="http://127.0.0.1:13005"
 export EPOCH_WITHDRAW_OFFSET_SEC="5"
 export CRON_TZ="Asia/Irkutsk"
 export DASH_CLI_CMD="sudo -u dash01 /opt/dash/bin/dash-cli"
@@ -61,6 +65,22 @@ EOF
   chmod 600 "$ENV"
   echo "Appended platform_credits block to $ENV"
 fi
+# Обновить URL API, если блок уже был без локального platform-explorer
+if grep -q 'platform-explorer.pshenmic.dev' "$ENV" 2>/dev/null; then
+  sed -i 's|export PLATFORM_EXPLORER_URL="https://platform-explorer.pshenmic.dev"|export PLATFORM_EXPLORER_URL="http://127.0.0.1:13005"|' "$ENV"
+  echo "Updated PLATFORM_EXPLORER_URL in $ENV"
+elif ! grep -q 'PLATFORM_EXPLORER_URL=' "$ENV" 2>/dev/null; then
+  printf '\nexport PLATFORM_EXPLORER_URL="http://127.0.0.1:13005"\n' >>"$ENV"
+  echo "Added PLATFORM_EXPLORER_URL to $ENV"
+fi
+REMOTE
+
+echo "==> Ensure reverse tunnel platformExp → BigBr (port 13005)"
+ssh "${PLATFORM_EXPLORER_SSH:-mno@161.97.96.43}" 'bash -s' <<'REMOTE'
+set -euo pipefail
+BIN=~/platform-credits-withdraw
+chmod +x "$BIN"/setup_platform_explorer_tunnel.sh
+"$BIN/setup_platform_explorer_tunnel.sh" --install-cron
 REMOTE
 
 echo "==> Install Node $NODE_VER (if missing)"
