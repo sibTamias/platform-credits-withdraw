@@ -4,20 +4,15 @@
 # Локально (platformExp, localhost:3005):
 #   export PLATFORM_EXPLORER_URL="http://127.0.0.1:3005"
 #
-# BigBr (109): API на platformExp через SSH (порт 3005 снаружи закрыт):
-#   export PLATFORM_EXPLORER_SSH="mno@161.97.96.43"
-#   export PLATFORM_EXPLORER_URL="http://127.0.0.1:3005"
-#
-# Внешний fallback:
+# BigBr (109): нет локального platform-explorer — внешний API
 #   export PLATFORM_EXPLORER_URL="https://platform-explorer.pshenmic.dev"
+#
+# platformExp (161): локальный platform-explorer
+#   export PLATFORM_EXPLORER_URL="http://127.0.0.1:3005"
 
 platform_explorer_resolve_url() {
 	if [[ -z "${PLATFORM_EXPLORER_URL:-}" ]]; then
-		if [[ -n "${PLATFORM_EXPLORER_SSH:-}" ]]; then
-			PLATFORM_EXPLORER_URL="http://127.0.0.1:3005"
-		else
-			PLATFORM_EXPLORER_URL="http://localhost:3005"
-		fi
+		PLATFORM_EXPLORER_URL="https://platform-explorer.pshenmic.dev"
 	fi
 }
 
