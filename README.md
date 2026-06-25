@@ -17,7 +17,10 @@
 | `platform_credits_withdraw.sh` | Основной скрипт вывода credits |
 | `export-private-keys-protx.sh` | Экспорт `privkey:proTxHash` из Dash Core |
 | `get_platform_epoch.sh` | Текущая эпоха и время начала/конца (API + человекочитаемый формат) |
-| `setup_platform_credits_server.sh` | Деплой на сервер через `git pull` + симлинки в `~/bin` |
+| `setup_platform_credits_server.sh` | Деплой на BigBr через `git pull` + симлинки в `~/bin` |
+| `setup_platform_credits_platformexp.sh` | Деплой утилит на platformExp (локальный API) |
+| `dash_cli_docker.sh` | Обёртка `dash-cli` для Core в контейнере dashmate |
+| **[INSTALL_PLATFORMEXP_CREDITS.md](INSTALL_PLATFORMEXP_CREDITS.md)** | **Полная установка вывода credits на platformExp** (локальный platform-explorer, импорт `operator`, cron) |
 | `.env.example` | Пример переменных окружения |
 
 ---
@@ -98,7 +101,7 @@ cd ~/dash-platform-mass-send && npm install
 | `--amount N` | Сумма credits (по умолчанию весь баланс минус fee) |
 | `--fee N` | Комиссия в credits (**минимум 400000000**, ниже нельзя) |
 | `--dry-run` | Проверка окружения без выполнения |
-| `--epoch-gate` | Запуск только после начала новой эпохи + offset |
+| `--epoch-gate` | Один mass-send после начала новой эпохи + offset |
 | `--force` | Игнорировать проверку эпохи |
 | `--reschedule-cron` | После прогона обновить crontab на следующую эпоху |
 | `--schedule-only` | Только пересчитать cron, без вывода |
@@ -149,7 +152,8 @@ Amount + fee must be above zero
    - `epoch.endTime` — начало **следующей** эпохи.
 3. С флагом `--epoch-gate`:
    - проверяет файл `~/.platform_credits_withdraw_last_epoch` (уже был вывод для этой эпохи?);
-   - ждёт `EPOCH_WITHDRAW_OFFSET_SEC` секунд после начала эпохи (по умолчанию **5**).
+   - ждёт `EPOCH_WITHDRAW_OFFSET_SEC` секунд после начала эпохи (по умолчанию **5**);
+   - один проход mass-send по всем ключам (mass-send сам решает по каждой identity, выводить или нет).
 4. С флагом `--reschedule-cron` **после прогона**:
    - вычисляет время: `следующая_эпоха + offset`;
    - обновляет одну строку в crontab (маркер `# platform_credits_withdraw epoch-scheduled`).
@@ -209,6 +213,25 @@ Until next epoch: 9d 01:37:04
 Критерий отбора нод: `type == "Evo"` и `wallet.hasOwnerKey == true` (как Owned+Evo в Dash Core GUI).
 
 На masternode-сервере без wallet RPC (режим `-masternode=1`) экспорт с сервера невозможен — экспортируйте на Mac и скопируйте `privkey_protx.txt` на сервер.
+
+---
+
+## Деплой на platformExp (161.97.96.43)
+
+Рекомендуемый сервер для вывода credits с **локальным** platform-explorer (`http://127.0.0.1:3005`) и Dash Core в **dashmate** (Docker).
+
+Пошаговая инструкция (Node, mass-send, импорт кошелька `operator`, `.env`, cron, логи, отключение BigBr):
+
+**[INSTALL_PLATFORMEXP_CREDITS.md](INSTALL_PLATFORMEXP_CREDITS.md)**
+
+Кратко после клонирования репо:
+
+```bash
+cd ~/platform-credits-withdraw && git pull --ff-only
+ln -sf ~/platform-credits-withdraw/dash_cli_docker.sh ~/bin/
+~/bin/platform_credits_withdraw.sh --schedule-only --reschedule-cron
+tail -f ~/tmp/platform_credits_withdraw.log
+```
 
 ---
 
@@ -290,11 +313,23 @@ crontab -l | grep platform_credits
 # API platform-explorer
 curl -s https://platform-explorer.pshenmic.dev/status | jq '.epoch'
 
-# Лог cron
+# Лог cron (вывод credits на platformExp)
+tail -100 ~/tmp/platform_credits_withdraw.log
+
+# Лог BigBrother (db.json), если используется отдельно
 tail -100 ~/tmp/cron.log
 ```
 
-### localhost:3005 не отвечает
+### localhost:3005 (platformExp)
+
+На platformExp используйте локальный API:
+
+```bash
+export PLATFORM_EXPLORER_URL="http://127.0.0.1:3005"
+curl -s http://127.0.0.1:3005/status | jq '.epoch'
+```
+
+### localhost:3005 не отвечает (BigBr)
 
 На BigBr **нет** локального platform-explorer. Используйте внешний API:
 

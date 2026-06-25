@@ -41,9 +41,6 @@ if [[ -z "$EPOCH_WITHDRAW_OFFSET_SEC" && -n "${EPOCH_WITHDRAW_OFFSET_MIN:-}" ]];
 	EPOCH_WITHDRAW_OFFSET_SEC=$((EPOCH_WITHDRAW_OFFSET_MIN * 60))
 fi
 EPOCH_WITHDRAW_OFFSET_SEC="${EPOCH_WITHDRAW_OFFSET_SEC:-5}"
-EPOCH_BALANCE_POLL_SEC="${EPOCH_BALANCE_POLL_SEC:-10}"
-EPOCH_WITHDRAW_RETRY_SEC="${EPOCH_WITHDRAW_RETRY_SEC:-120}"
-EPOCH_WITHDRAW_MAX_ROUNDS="${EPOCH_WITHDRAW_MAX_ROUNDS:-20}"
 LAST_EPOCH_FILE="${LAST_EPOCH_FILE:-$BIN/.platform_credits_withdraw_last_epoch}"
 CRON_LOG="${CRON_LOG:-$HOME/tmp/cron.log}"
 CRON_TZ="${CRON_TZ:-Asia/Irkutsk}"
@@ -74,8 +71,8 @@ Options:
   --amount N          Сумма credits (default: весь баланс минус fee)
   --fee N             Fee in credits (protocol minimum 400000000; do not lower)
   --dry-run           Проверить окружение и показать команду, не выполнять
-  --epoch-gate        Авто-режим эпохи: ждать баланс > fee, выводить в цикле, cron на старт эпохи
-  --force             Игнорировать проверку эпохи и ожидание баланса (ручной запуск)
+  --epoch-gate        Авто-режим эпохи: один mass-send после старта (+ offset), cron на след. эпоху
+  --force             Игнорировать проверку «эпоха уже обработана» (ручной перезапуск)
   --reschedule-cron   После прогона обновить crontab на следующую эпоху
   --schedule-only     Только пересчитать cron (без вывода credits)
   -h, --help          Эта справка
@@ -84,7 +81,6 @@ Environment (.env):
   KEYS_FILE, MASS_SEND_DIR, NODE_PATH, NETWORK, TYPE, TIMEOUT_SEC
   PLATFORM_EXPLORER_URL (default http://localhost:3005), PLATFORM_EXPLORER_SSH (BigBr → mno@161.97.96.43)
   EPOCH_WITHDRAW_OFFSET_SEC (default 5 — cron = старт эпохи + 5с)
-  EPOCH_BALANCE_POLL_SEC (default 10 — опрос 1 случайной ноды), EPOCH_WITHDRAW_RETRY_SEC (120), EPOCH_WITHDRAW_MAX_ROUNDS (20)
   LAST_EPOCH_FILE, CRON_LOG, CRON_TZ
   RPC_URL, RPC_USER, RPC_PASS, WALLET, WALLET_FEE, WALLET_PASSPHRASE — для --update-keys
   DASH_CLI_CMD — на сервере 109: sudo -u dash01 /opt/dash/bin/dash-cli
@@ -213,38 +209,6 @@ epoch_run_at_ms() {
 	echo $((start_ms + EPOCH_WITHDRAW_OFFSET_SEC * 1000))
 }
 
-list_protx_hashes() {
-	grep -v '^[[:space:]]*#' "$KEYS_FILE" | grep -v '^[[:space:]]*$' | awk -F: '{print $NF}'
-}
-
-pick_random_protx() {
-	local -a protx_arr=()
-	mapfile -t protx_arr < <(list_protx_hashes)
-	((${#protx_arr[@]})) || return 1
-	echo "${protx_arr[$RANDOM % ${#protx_arr[@]}]}"
-}
-
-get_validator_balance_credits() {
-	local protx="$1" bal
-	bal=$(platform_api_get "/validator/$protx" \
-		| jq -r '.identityBalance // 0' 2>/dev/null) || bal=0
-	[[ "$bal" =~ ^[0-9]+$ ]] || bal=0
-	echo "$bal"
-}
-
-# stdout: max_balance count_above_min checked
-fleet_balance_stats() {
-	local protx max=0 count=0 checked=0 bal
-	while IFS= read -r protx; do
-		[[ -n "$protx" ]] || continue
-		bal=$(get_validator_balance_credits "$protx")
-		((checked++)) || true
-		if (( bal > max )); then max=$bal; fi
-		if (( bal > MIN_WITHDRAWAL_FEE )); then ((count++)) || true; fi
-	done < <(list_protx_hashes)
-	echo "$max $count $checked"
-}
-
 wait_until_run_time() {
 	local start_ms="$1" target_ms now
 	target_ms=$(epoch_run_at_ms "$start_ms")
@@ -256,34 +220,6 @@ wait_until_run_time() {
 		sleep 1
 	done
 	echo "[INFO] Run time reached." >&2
-}
-
-wait_for_withdrawable_balance() {
-	local epoch_end_ms="$1"
-	local protx bal now poll=0 pool_size
-	pool_size=$(list_protx_hashes | wc -l | tr -d ' ')
-	echo "[INFO] Polling 1 random node every ${EPOCH_BALANCE_POLL_SEC}s (pool=${pool_size}, trigger if balance > ${MIN_WITHDRAWAL_FEE})..." >&2
-	echo "[INFO] Poll deadline (epoch end):" >&2
-	format_epoch_ms "$epoch_end_ms" >&2
-	while true; do
-		((poll++)) || true
-		protx=$(pick_random_protx) || {
-			echo "[ERROR] No proTxHash in $KEYS_FILE" >&2
-			return 1
-		}
-		bal=$(get_validator_balance_credits "$protx")
-		now=$(now_ms)
-		echo "[INFO] Poll #$poll: sample ${protx:0:16}... balance=${bal} credits" >&2
-		if (( bal > MIN_WITHDRAWAL_FEE )); then
-			echo "[INFO] Sampled node above minimum — starting withdrawal for all ${pool_size} nodes." >&2
-			return 0
-		fi
-		if (( now >= epoch_end_ms )); then
-			echo "[WARN] Epoch ended without sampled balance above minimum (last=${bal})." >&2
-			return 1
-		fi
-		sleep "$EPOCH_BALANCE_POLL_SEC"
-	done
 }
 
 # Запуск разрешён: новая эпоха (ещё не обработана).
@@ -389,10 +325,9 @@ handle_epoch_scheduling() {
 }
 
 run_withdrawal_round() {
-	local round="${1:-1}" rc=0
-	local log_file payout_file summary_out summary_display payouts_line fail_count
+	local rc=0
+	local log_file payout_file summary_out summary_display payouts_line
 
-	echo "[INFO] === Withdrawal round $round ===" >&2
 	echo "[INFO] Starting withdrawal (timeout ${TIMEOUT_SEC}s)..." >&2
 	echo "[WARN] Credits will be sent to registered payout address for each proTxHash." >&2
 
@@ -445,41 +380,14 @@ Failed:           ?
 	rm -f "$log_file" "$payout_file"
 
 	if [[ "$rc" -eq 124 ]]; then
-		echo "[ERROR] round $round timed out after ${TIMEOUT_SEC}s" >&2
+		echo "[ERROR] withdrawal timed out after ${TIMEOUT_SEC}s" >&2
 	fi
 	return 0
 }
 
-run_epoch_withdrawal_loop() {
-	local epoch_end_ms="$1" round=1 max count checked
-
-	if [[ "$FORCE_RUN" -eq 0 ]]; then
-		wait_for_withdrawable_balance "$epoch_end_ms" || true
-	fi
-
-	while (( round <= EPOCH_WITHDRAW_MAX_ROUNDS )); do
-		echo "[INFO] Full fleet balance check (all nodes)..." >&2
-		read -r max count checked <<<"$(fleet_balance_stats)"
-		echo "[INFO] Pre-round: checked=$checked, above_min=$count, max_balance=${max}" >&2
-		if (( count == 0 )); then
-			echo "[INFO] All validators below minimum — epoch withdrawal complete." >&2
-			break
-		fi
-		run_withdrawal_round "$round" || true
-		((round++)) || true
-		if (( round > EPOCH_WITHDRAW_MAX_ROUNDS )); then
-			echo "[WARN] Reached EPOCH_WITHDRAW_MAX_ROUNDS=$EPOCH_WITHDRAW_MAX_ROUNDS" >&2
-			break
-		fi
-		echo "[INFO] Post-round full fleet check..." >&2
-		read -r max count checked <<<"$(fleet_balance_stats)"
-		if (( count == 0 )); then
-			echo "[INFO] All balances now below minimum (max=${max})." >&2
-			break
-		fi
-		echo "[INFO] ${count}/${checked} still above min — next round in ${EPOCH_WITHDRAW_RETRY_SEC}s..." >&2
-		sleep "$EPOCH_WITHDRAW_RETRY_SEC"
-	done
+run_epoch_withdrawal_once() {
+	echo "[INFO] Epoch withdrawal: single mass-send pass (credits credited at epoch change)." >&2
+	run_withdrawal_round
 }
 
 finalize_epoch_run() {
@@ -871,7 +779,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 if [[ "$EPOCH_GATE" -eq 1 ]]; then
-	run_epoch_withdrawal_loop "$EPOCH_NEXT_START_MS"
+	run_epoch_withdrawal_once
 	finalize_epoch_run
 	exit 0
 fi

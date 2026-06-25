@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # check_fleet_balances.sh — замер времени опроса балансов всех нод через platform-explorer API.
-# Использует тот же метод, что fleet_balance_stats() в platform_credits_withdraw.sh.
+# Использует тот же API /validator/, что check_fleet_balances.sh (диагностика, не используется в epoch-gate).
 #
 # Примеры:
 #   ./check_fleet_balances.sh
@@ -29,7 +29,7 @@ Usage: check_fleet_balances.sh [options]
 
 Options:
   --verbose, -v   Показать баланс и время по каждой ноде
-  --sample        Один случайный proTx (как в wait_for_withdrawable_balance)
+  --sample        Один случайный proTx из privkey_protx.txt
   --keys-file F   Файл privkey:proTxHash (default: privkey_protx.txt)
   -h, --help      Справка
 
